@@ -1,0 +1,13 @@
+package main
+
+import (
+	"os"
+
+	"aiconnectionmanager/internal/app"
+)
+
+func main() {
+	if exitCode := app.Run(os.Args[1:], os.Stdout, os.Stderr); exitCode != 0 {
+		os.Exit(exitCode)
+	}
+}
