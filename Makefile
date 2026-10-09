@@ -15,7 +15,7 @@ GOVULNCHECK_VERSION ?= v1.8.0
 ACTIONLINT_VERSION ?= v1.7.12
 PMD_VERSION ?= 7.27.0
 PMD_MINIMUM_TOKENS ?= 100
-HADOLINT_IMAGE ?= hadolint/hadolint:2.15.1
+HADOLINT_IMAGE ?= hadolint/hadolint:v2.15.1-debian
 
 GOLANGCI_LINT := $(TOOLS_BIN)/golangci-lint
 GOVULNCHECK := $(TOOLS_BIN)/govulncheck
