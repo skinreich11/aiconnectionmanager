@@ -80,7 +80,7 @@ func Run(ctx context.Context, config Config, logger *log.Logger) error {
 		}
 		return fmt.Errorf("serve websocket service: %w", err)
 	case <-ctx.Done():
-		shutdownContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		if err := server.Shutdown(shutdownContext); err != nil {
 			registry.CloseAll()

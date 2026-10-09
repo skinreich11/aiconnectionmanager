@@ -14,6 +14,8 @@
 # Go build and test artifacts
 /bin/
 /dist/
+.tools/
+.scannerwork/
 *.test
 coverage.out
 *.coverprofile

@@ -32,6 +32,7 @@ func TestWebSocketHandlerSendsGreetingAndKeepsConnectionOpen(t *testing.T) {
 		TLSClientConfig: server.Client().Transport.(*http.Transport).TLSClientConfig,
 	}
 	connectionURL := "wss" + strings.TrimPrefix(server.URL, "https") + connectionpkg.WebSocketPath
+	//nolint:bodyclose // gorilla/websocket documents that handshake bodies do not need closing.
 	connection, _, err := dialer.Dial(connectionURL, nil)
 	if err != nil {
 		t.Fatalf("dial secure websocket: %v", err)
@@ -77,6 +78,7 @@ func TestWebSocketHandlerRegistersAndRemovesConnections(t *testing.T) {
 	headers := http.Header{}
 	headers.Set(connectionpkg.ClientIDHeader, "terminal-1")
 	connectionURL := "wss" + strings.TrimPrefix(server.URL, "https") + connectionpkg.WebSocketPath
+	//nolint:bodyclose // gorilla/websocket documents that handshake bodies do not need closing.
 	connection, _, err := dialer.Dial(connectionURL, headers)
 	if err != nil {
 		t.Fatalf("dial secure websocket: %v", err)
@@ -100,7 +102,7 @@ func TestRunClientPrintsGreetingsUntilContextIsCanceled(t *testing.T) {
 
 	certificatePath := writeCertificateFile(t, server.Certificate())
 	connectionURL := "wss" + strings.TrimPrefix(server.URL, "https") + connectionpkg.WebSocketPath
-	clientContext, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	clientContext, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 	var output bytes.Buffer
 

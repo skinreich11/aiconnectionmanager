@@ -42,6 +42,7 @@ func RunWithID(ctx context.Context, rawURL, certificatePath, clientID string, ou
 	if clientID != "" {
 		headers.Set(connection.ClientIDHeader, clientID)
 	}
+	//nolint:bodyclose // gorilla/websocket documents that handshake bodies do not need closing.
 	connection, _, err := dialer.DialContext(ctx, rawURL, headers)
 	if err != nil {
 		return fmt.Errorf("connect to websocket service: %w", err)
@@ -77,6 +78,7 @@ func RunWithID(ctx context.Context, rawURL, certificatePath, clientID string, ou
 
 // LoadRootCAs loads the certificate authority used to verify the WebSocket service.
 func LoadRootCAs(certificatePath string) (*x509.CertPool, error) {
+	// #nosec G304 -- the CA path is explicit local client configuration.
 	certificatePEM, err := os.ReadFile(certificatePath)
 	if err != nil {
 		return nil, fmt.Errorf("read CA certificate %q: %w", certificatePath, err)

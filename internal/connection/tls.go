@@ -100,6 +100,7 @@ func pathExists(path string) (bool, error) {
 }
 
 func writeNewFile(path string, contents []byte, permission os.FileMode) error {
+	// #nosec G304 -- certificate and key paths are explicit local configuration.
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, permission)
 	if err != nil {
 		return err

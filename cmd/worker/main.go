@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"aiconnector/internal/app"
+	"aiconnectionmanager/internal/app"
 )
 
 func main() {

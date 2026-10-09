@@ -1,9 +1,7 @@
 package connection
 
 import (
-	"fmt"
 	"net/http"
-	"net/url"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -84,21 +82,4 @@ func serveWebSocketConnection(connection *websocket.Conn, interval time.Duration
 			return
 		}
 	}
-}
-
-func validateWebSocketURL(rawURL string) error {
-	if rawURL == "" {
-		return fmt.Errorf("websocket URL is required")
-	}
-	parsedURL, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("parse websocket URL: %w", err)
-	}
-	if parsedURL.Scheme != "wss" {
-		return fmt.Errorf("websocket URL must use wss scheme")
-	}
-	if parsedURL.Hostname() == "" {
-		return fmt.Errorf("websocket URL must include a host")
-	}
-	return nil
 }
