@@ -117,7 +117,7 @@ container-lint: ## Lint the Dockerfile with Hadolint
 	else \
 		command -v docker >/dev/null 2>&1 || { echo 'Hadolint or Docker is required for container linting.' >&2; exit 1; }; \
 		docker info >/dev/null 2>&1 || { echo 'Docker is not running.' >&2; exit 1; }; \
-		docker run --rm --interactive "$(HADOLINT_IMAGE)" --failure-threshold error - < Dockerfile; \
+		docker run --rm --interactive "$(HADOLINT_IMAGE)" hadolint --failure-threshold error - < Dockerfile; \
 	fi
 
 lint: format-check vet staticcheck golangci-lint gosec govulncheck workflow-lint pmd-cpd ## Run code-quality and security linters
