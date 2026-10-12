@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"aiconnectionmanager/internal/client"
+	"aiconnectionmanager/internal/messaging"
 	"aiconnectionmanager/internal/server"
 )
 
@@ -52,6 +53,11 @@ func runServerCommand(arguments []string, output io.Writer) error {
 	keyPath := flags.String("key", "configs/key.pem", "TLS private key path; generated when absent")
 	instanceID := flags.String("instance-id", defaultInstanceID(), "unique ID for this service instance")
 	interval := flags.Duration("interval", time.Minute, "time between greeting messages")
+	amqpURL := flags.String("amqp-url", os.Getenv("AMQP_URL"), "RabbitMQ broker URL; AMQP_USERNAME and AMQP_PASSWORD provide credentials")
+	amqpUsername := flags.String("amqp-username", os.Getenv("AMQP_USERNAME"), "RabbitMQ username")
+	queuePrefix := flags.String("amqp-queue-prefix", os.Getenv("AMQP_QUEUE_PREFIX"), "RabbitMQ queue prefix")
+	metadataURL := flags.String("ecs-metadata-url", os.Getenv("ECS_CONTAINER_METADATA_URI_V4"), "ECS container metadata v4 URL")
+	containerID := flags.String("container-id", os.Getenv("AMQP_CONTAINER_ID"), "container ID override for local development")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -66,6 +72,14 @@ func runServerCommand(arguments []string, output io.Writer) error {
 		InstanceID:      *instanceID,
 		Interval:        *interval,
 		ReportInterval:  30 * time.Second,
+		Messaging: messaging.Config{
+			BrokerURL:   *amqpURL,
+			Username:    *amqpUsername,
+			Password:    os.Getenv("AMQP_PASSWORD"),
+			QueuePrefix: *queuePrefix,
+			MetadataURL: *metadataURL,
+			ContainerID: *containerID,
+		},
 	}, logger)
 }
 

@@ -1,0 +1,29 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER must be set}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS must be set}
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  aiconnectionmanager:
+    build: .
+    image: ${IMAGE_NAME:-aiconnectionmanager:local}
+    container_name: ${CONTAINER_NAME:-aiconnectionmanager}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      AMQP_URL: amqp://rabbitmq:5672/%2F
+      AMQP_USERNAME: ${RABBITMQ_DEFAULT_USER}
+      AMQP_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
+      AMQP_CONTAINER_ID: local-compose
+    ports:
+      - "${HOST_PORT:-8443}:8443"

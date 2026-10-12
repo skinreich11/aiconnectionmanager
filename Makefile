@@ -126,16 +126,20 @@ quality: lint test-race coverage build ## Run all local quality gates
 
 ci: quality container-lint docker-build docker-smoke ## Run quality gates and validate the container
 
-docker-check: ## Verify Docker is available
+docker-check: ## Verify Docker and Docker Compose are available
 	command -v docker >/dev/null 2>&1 || { echo 'Docker CLI was not found.' >&2; exit 1; }
 	docker info >/dev/null 2>&1 || { echo 'Docker is not running.' >&2; exit 1; }
+	docker compose version >/dev/null 2>&1 || { echo 'Docker Compose is not available.' >&2; exit 1; }
 
 docker-build: docker-check ## Build the application image
 	docker build --tag "$(IMAGE)" .
 
-docker-run: docker-build ## Build and run the application image
-	docker rm --force "$(CONTAINER)" >/dev/null 2>&1 || true; \
-	exec docker run --init --rm --name "$(CONTAINER)" --publish "$(HOST_PORT):8443" "$(IMAGE)"
+docker-run: docker-check ## Build and run the service with local RabbitMQ
+	: "$${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER must be set for local RabbitMQ}"; \
+	: "$${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS must be set for local RabbitMQ}"; \
+	docker compose down --remove-orphans >/dev/null 2>&1 || true; \
+	IMAGE_NAME="$(IMAGE)" CONTAINER_NAME="$(CONTAINER)" HOST_PORT="$(HOST_PORT)" \
+	exec docker compose up --build --remove-orphans
 
 docker-smoke: docker-build ## Build, start an image, and verify its HTTPS endpoint responds
 	command -v curl >/dev/null 2>&1 || { echo 'curl is required for the Docker smoke test.' >&2; exit 1; }; \

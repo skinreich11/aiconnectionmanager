@@ -22,6 +22,12 @@ if ! command -v make >/dev/null 2>&1; then
     exit 1
 fi
 
+if [ -z "${RABBITMQ_DEFAULT_USER:-}" ] || [ -z "${RABBITMQ_DEFAULT_PASS:-}" ]; then
+    printf '%s\n' 'Set RABBITMQ_DEFAULT_USER and RABBITMQ_DEFAULT_PASS before starting local RabbitMQ.' >&2
+    printf '%s\n' "Example: RABBITMQ_DEFAULT_USER=dev RABBITMQ_DEFAULT_PASS='change-me-locally' ./docker-run.sh" >&2
+    exit 1
+fi
+
 exec make -C "$script_directory" docker-run \
     IMAGE="$image_name" \
     CONTAINER="$container_name" \

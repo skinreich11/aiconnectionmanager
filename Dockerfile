@@ -18,7 +18,7 @@ FROM golang:1.27.2-alpine AS runtime
 
 # Keep tini aligned with the Alpine package repository used by the base image.
 # hadolint ignore=DL3018
-RUN apk add --no-cache tini \
+RUN apk add --no-cache ca-certificates tini \
     && addgroup -S app \
     && adduser -S -G app -u 10001 app
 
