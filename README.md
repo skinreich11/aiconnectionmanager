@@ -43,9 +43,10 @@ RABBITMQ_DEFAULT_PASS='change-me-locally' \
 ```
 
 The script builds `aiconnectionmanager:local`, replaces the previous local
-Compose stack, starts RabbitMQ plus the service, and publishes the secure
-WebSocket service at `wss://127.0.0.1:8443/ws`. RabbitMQ is also available at
-`amqp://localhost:5672` and its management API at `http://localhost:15672`.
+Compose stack, starts RabbitMQ, Valkey, and the service, and publishes the
+secure WebSocket service at `wss://127.0.0.1:8443/ws`. RabbitMQ is also
+available at `amqp://localhost:5672` and its management API at
+`http://localhost:15672`. Valkey is available at `redis://localhost:6379`.
 The application container starts with `go run . server` and generates its TLS
 certificate and private key inside the container.
 
@@ -53,7 +54,7 @@ The script supports these optional environment variables:
 
 ```sh
 RABBITMQ_DEFAULT_USER=dev RABBITMQ_DEFAULT_PASS='change-me-locally' \
-HOST_PORT=9443 IMAGE_NAME=aiconnectionmanager:dev CONTAINER_NAME=aiconnectionmanager-dev \
+HOST_PORT=9443 VALKEY_HOST_PORT=6380 IMAGE_NAME=aiconnectionmanager:dev CONTAINER_NAME=aiconnectionmanager-dev \
 ./docker-run.sh
 ```
 
@@ -92,11 +93,24 @@ The canonical command package can also be run directly:
 go run ./cmd/worker server
 ```
 
-The server supports `-addr`, `-cert`, `-key`, `-instance-id`, `-interval`, `-amqp-url`, `-amqp-username`, `-amqp-queue-prefix`, `-ecs-metadata-url`, and the local-only `-container-id` override; the client supports `-url`, `-ca`, and `-client-id`.
+The server supports `-addr`, `-cert`, `-key`, `-instance-id`, `-interval`, `-amqp-url`, `-amqp-username`, `-amqp-queue-prefix`, `-ecs-metadata-url`, `-valkey-url`, `-valkey-username`, and the local-only `-container-id` override; the client supports `-url`, `-ca`, and `-client-id`.
+
+## ECS production connectivity
+
+When `ECS_CONTAINER_METADATA_URI_V4` is present, the service treats the process as an ECS deployment and requires both external services before it starts. It does not start or fall back to local RabbitMQ or Valkey. Configure the ECS task with the Amazon MQ broker endpoint and ElastiCache endpoint:
+
+```text
+AMQP_URL=amqps://<amazon-mq-broker>:5671/%2F
+VALKEY_URL=rediss://<elasticache-valkey-endpoint>:6379
+```
+
+Inject `AMQP_USERNAME`, `AMQP_PASSWORD`, `VALKEY_USERNAME`, and `VALKEY_PASSWORD` through the ECS task definition's Secrets Manager `secrets` entries. Do not set `AMQP_CONTAINER_ID` in ECS; the service reads the task's `DockerId` from `ECS_CONTAINER_METADATA_URI_V4` and uses that same ID for RabbitMQ and Valkey. The ECS task security group must be able to reach Amazon MQ on AMQP/TLS port `5671` and the ElastiCache endpoint on its configured TLS port.
+
+The service validates `amqps://` and `rediss://` schemes in ECS mode, pings Valkey during startup, and connects RabbitMQ using `AMQP_URL`. Amazon MQ broker endpoints and ElastiCache endpoints are supplied by deployment configuration, not provisioned by this repository.
 
 ## Amazon MQ RabbitMQ consumer
 
-Set `AMQP_URL`, `AMQP_USERNAME`, and `AMQP_PASSWORD` in the ECS task definition to enable the request consumer. Use an `amqps://` Amazon MQ broker URL without credentials; inject the username and password from AWS Secrets Manager through ECS task secrets. ECS supplies `ECS_CONTAINER_METADATA_URI_V4`, which the service calls during startup to read the current container's `DockerId`.
+The service declares and consumes this exclusive, auto-delete queue before starting its WebSocket server:
 
 The service declares and consumes this exclusive, auto-delete queue before starting its WebSocket server:
 
@@ -106,15 +120,51 @@ prod.connection.aiconnectionmanager.send-request.{DockerId}.q.
 
 Every message is logged as `event received: <message body>` and acknowledged after logging. The queue is intentionally task-specific, so each horizontally scaled ECS task receives a different queue. Producers must publish or route messages to the desired task queues.
 
+After a WebSocket connection is accepted, the service writes a Valkey mapping with the client ID as the key and the same container ID used in the RabbitMQ queue name as the value. The mapping is deleted when that WebSocket terminates; a reconnect writes it again.
+
 For local development, set RabbitMQ credentials and start the included broker and service:
 
 ```sh
-RABBITMQ_DEFAULT_USER=dev \
-RABBITMQ_DEFAULT_PASS='change-me-locally' \
+export RABBITMQ_DEFAULT_USER=dev
+export RABBITMQ_DEFAULT_PASS='change-me-locally'
 docker compose up --build
 ```
 
-`AMQP_CONTAINER_ID=local-compose` is used only by the compose setup because ECS metadata is unavailable locally. Do not use that override in ECS.
+`AMQP_CONTAINER_ID=local-compose` is used only by the Compose setup because ECS metadata is unavailable locally. Do not use that override in ECS.
+
+### Inspect local Valkey mappings
+
+The Compose service exposes Valkey on port `6379` by default. Use the bundled CLI from the Valkey container:
+
+```sh
+# Set these in the shell used for each `docker compose` command.
+export RABBITMQ_DEFAULT_USER=dev
+export RABBITMQ_DEFAULT_PASS='change-me-locally'
+
+docker compose exec valkey valkey-cli --scan
+docker compose exec valkey valkey-cli get terminal-1
+```
+
+To create a mapping from a local test client, run this in another terminal while the stack is up:
+
+```sh
+docker compose exec aiconnectionmanager \
+  go run . client -url wss://127.0.0.1:8443/ws -ca configs/cert.pem -client-id terminal-1
+```
+
+Or connect from the host with a locally installed `valkey-cli`/`redis-cli`:
+
+```sh
+valkey-cli -h 127.0.0.1 -p 6379 --scan
+valkey-cli -h 127.0.0.1 -p 6379 get terminal-1
+```
+
+For the example client ID above, the value should be `local-compose`:
+
+```text
+terminal-1
+local-compose
+```
 
 ### Send a local RabbitMQ event
 

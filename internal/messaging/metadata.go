@@ -16,6 +16,17 @@ type ContainerIDResolver interface {
 	Resolve(context.Context) (string, error)
 }
 
+// ResolveContainerID resolves the identity shared by RabbitMQ queues and Valkey mappings.
+func ResolveContainerID(ctx context.Context, config Config) (string, error) {
+	if config.ContainerID != "" {
+		if _, err := QueueName(DefaultQueuePrefix, config.ContainerID); err != nil {
+			return "", err
+		}
+		return config.ContainerID, nil
+	}
+	return NewContainerMetadataResolver(config.MetadataURL, nil).Resolve(ctx)
+}
+
 type staticContainerIDResolver string
 
 func (resolver staticContainerIDResolver) Resolve(context.Context) (string, error) {

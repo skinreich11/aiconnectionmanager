@@ -6,19 +6,23 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
+	"errors"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"aiconnectionmanager/internal/app"
 	"aiconnectionmanager/internal/client"
 	connectionpkg "aiconnectionmanager/internal/connection"
+	messagingpkg "aiconnectionmanager/internal/messaging"
 	serverpkg "aiconnectionmanager/internal/server"
+	valkeypkg "aiconnectionmanager/internal/valkey"
 	"github.com/gorilla/websocket"
 )
 
@@ -94,6 +98,71 @@ func TestWebSocketHandlerRegistersAndRemovesConnections(t *testing.T) {
 		t.Fatalf("close client connection: %v", err)
 	}
 	waitForRegistrySize(t, registry, 0)
+}
+
+func TestWebSocketHandlerStoresClientContainerMapping(t *testing.T) {
+	registry := connectionpkg.NewConnectionRegistry("test")
+	store := newRecordingClientContainerStore()
+	server := httptest.NewTLSServer(connectionpkg.NewWebSocketHandlerWithClientContainerStore(5*time.Millisecond, registry, store, "container-123"))
+	defer server.Close()
+
+	dialer := websocket.Dialer{
+		TLSClientConfig: server.Client().Transport.(*http.Transport).TLSClientConfig,
+	}
+	headers := http.Header{}
+	headers.Set(connectionpkg.ClientIDHeader, "terminal-1")
+	connectionURL := "wss" + strings.TrimPrefix(server.URL, "https") + connectionpkg.WebSocketPath
+	//nolint:bodyclose // gorilla/websocket documents that handshake bodies do not need closing.
+	connection, _, err := dialer.Dial(connectionURL, headers)
+	if err != nil {
+		t.Fatalf("dial secure websocket: %v", err)
+	}
+	defer connection.Close()
+
+	if !waitForStore(t, time.Second, func() bool {
+		value, ok := store.Value("terminal-1")
+		return ok && value == "container-123"
+	}) {
+		t.Fatalf("stored mapping = %q, want terminal-1 -> container-123", store.MustValue("terminal-1"))
+	}
+	if err := connection.Close(); err != nil {
+		t.Fatalf("close client connection: %v", err)
+	}
+	if !waitForStore(t, time.Second, func() bool { return store.DeleteCalls() == 1 }) {
+		t.Fatal("Valkey mapping was not deleted")
+	}
+	if _, ok := store.Value("terminal-1"); ok {
+		t.Fatal("disconnected client mapping should be deleted")
+	}
+}
+
+func TestWebSocketHandlerClosesConnectionWhenMappingFails(t *testing.T) {
+	registry := connectionpkg.NewConnectionRegistry("test")
+	store := newRecordingClientContainerStore()
+	store.setError = errors.New("Valkey unavailable")
+	server := httptest.NewTLSServer(connectionpkg.NewWebSocketHandlerWithClientContainerStore(5*time.Millisecond, registry, store, "container-123"))
+	defer server.Close()
+
+	dialer := websocket.Dialer{
+		TLSClientConfig: server.Client().Transport.(*http.Transport).TLSClientConfig,
+	}
+	headers := http.Header{}
+	headers.Set(connectionpkg.ClientIDHeader, "terminal-1")
+	connectionURL := "wss" + strings.TrimPrefix(server.URL, "https") + connectionpkg.WebSocketPath
+	//nolint:bodyclose // gorilla/websocket documents that handshake bodies do not need closing.
+	connection, _, err := dialer.Dial(connectionURL, headers)
+	if err != nil {
+		t.Fatalf("dial secure websocket: %v", err)
+	}
+	defer connection.Close()
+
+	if !waitForStore(t, time.Second, func() bool { return store.SetCalls() == 1 }) {
+		t.Fatal("Valkey mapping was not attempted")
+	}
+	waitForRegistrySize(t, registry, 0)
+	if _, ok := store.Value("terminal-1"); ok {
+		t.Fatal("failed mapping should not be recorded")
+	}
 }
 
 func TestRunClientPrintsGreetingsUntilContextIsCanceled(t *testing.T) {
@@ -205,6 +274,58 @@ func TestEnsureCertificatePairSupportsFreshPaths(t *testing.T) {
 	}
 }
 
+func TestRunServerRequiresAmazonMQAndElastiCacheOnECS(t *testing.T) {
+	baseConfig := serverpkg.Config{
+		Address:                     "127.0.0.1:0",
+		Interval:                    time.Second,
+		ReportInterval:              time.Second,
+		RequireExternalDependencies: true,
+	}
+	tests := []struct {
+		name   string
+		config serverpkg.Config
+		want   string
+	}{
+		{name: "missing Amazon MQ URL", config: baseConfig, want: "AMQP_URL"},
+		{
+			name: "missing ElastiCache URL",
+			config: serverpkg.Config{
+				Address:                     baseConfig.Address,
+				Interval:                    baseConfig.Interval,
+				ReportInterval:              baseConfig.ReportInterval,
+				RequireExternalDependencies: true,
+				Messaging: messagingpkg.Config{
+					BrokerURL: "amqps://broker.example:5671/%2F",
+				},
+			},
+			want: "VALKEY_URL",
+		},
+		{
+			name: "local broker and cache URLs",
+			config: serverpkg.Config{
+				Address:                     baseConfig.Address,
+				Interval:                    baseConfig.Interval,
+				ReportInterval:              baseConfig.ReportInterval,
+				RequireExternalDependencies: true,
+				Messaging: messagingpkg.Config{
+					BrokerURL: "amqp://rabbitmq:5672/%2F",
+				},
+				Valkey: valkeypkg.Config{URL: "redis://valkey:6379"},
+			},
+			want: "amqps://",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := serverpkg.Run(context.Background(), test.config, log.Default())
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want substring %q", err, test.want)
+			}
+		})
+	}
+}
+
 func TestRunServerStartsAndStops(t *testing.T) {
 	tempDirectory := t.TempDir()
 	serverContext, cancel := context.WithCancel(context.Background())
@@ -301,6 +422,18 @@ func waitForRegistrySize(t *testing.T, registry *connectionpkg.ConnectionRegistr
 	t.Fatalf("registry size = %d, want %d", len(registry.Snapshot()), want)
 }
 
+func waitForStore(t *testing.T, timeout time.Duration, condition func() bool) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return true
+		}
+		time.Sleep(time.Millisecond)
+	}
+	return condition()
+}
+
 type notificationWriter struct {
 	notifications chan<- struct{}
 }
@@ -311,4 +444,59 @@ func (writer notificationWriter) Write(contents []byte) (int, error) {
 	default:
 	}
 	return len(contents), nil
+}
+
+type recordingClientContainerStore struct {
+	mutex       sync.RWMutex
+	values      map[string]string
+	setCalls    int
+	deleteCalls int
+	setError    error
+}
+
+func newRecordingClientContainerStore() *recordingClientContainerStore {
+	return &recordingClientContainerStore{values: make(map[string]string)}
+}
+
+func (store *recordingClientContainerStore) Set(_ context.Context, clientID, containerID string) error {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	store.setCalls++
+	if store.setError != nil {
+		return store.setError
+	}
+	store.values[clientID] = containerID
+	return nil
+}
+
+func (store *recordingClientContainerStore) SetCalls() int {
+	store.mutex.RLock()
+	defer store.mutex.RUnlock()
+	return store.setCalls
+}
+
+func (store *recordingClientContainerStore) Delete(_ context.Context, clientID string) error {
+	store.mutex.Lock()
+	defer store.mutex.Unlock()
+	store.deleteCalls++
+	delete(store.values, clientID)
+	return nil
+}
+
+func (store *recordingClientContainerStore) DeleteCalls() int {
+	store.mutex.RLock()
+	defer store.mutex.RUnlock()
+	return store.deleteCalls
+}
+
+func (store *recordingClientContainerStore) Value(clientID string) (string, bool) {
+	store.mutex.RLock()
+	defer store.mutex.RUnlock()
+	value, ok := store.values[clientID]
+	return value, ok
+}
+
+func (store *recordingClientContainerStore) MustValue(clientID string) string {
+	value, _ := store.Value(clientID)
+	return value
 }

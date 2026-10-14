@@ -1,6 +1,7 @@
 package connection
 
 import (
+	"context"
 	"net/http"
 	"time"
 
@@ -13,7 +14,19 @@ const (
 	ClientIDHeader  = "X-Client-ID"
 )
 
+// ClientContainerStore persists the container serving a connected client.
+type ClientContainerStore interface {
+	Set(context.Context, string, string) error
+	Delete(context.Context, string) error
+}
+
+// NewWebSocketHandler creates a WebSocket handler without external client mapping.
 func NewWebSocketHandler(interval time.Duration, registry *ConnectionRegistry) http.Handler {
+	return NewWebSocketHandlerWithClientContainerStore(interval, registry, nil, "")
+}
+
+// NewWebSocketHandlerWithClientContainerStore creates a WebSocket handler that persists client mappings.
+func NewWebSocketHandlerWithClientContainerStore(interval time.Duration, registry *ConnectionRegistry, clientContainerStore ClientContainerStore, containerID string) http.Handler {
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -50,13 +63,33 @@ func NewWebSocketHandler(interval time.Duration, registry *ConnectionRegistry) h
 			return
 		}
 
-		serveWebSocketConnection(connection, interval, registry, info.ClientID)
+		if clientContainerStore != nil {
+			if err := clientContainerStore.Set(request.Context(), info.ClientID, containerID); err != nil {
+				_ = registry.Unregister(info.ClientID, connection)
+				_ = connection.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "connection registration failed"),
+					time.Now().Add(time.Second),
+				)
+				_ = connection.Close()
+				return
+			}
+		}
+
+		serveWebSocketConnection(connection, interval, registry, info.ClientID, clientContainerStore)
 	})
 }
 
-func serveWebSocketConnection(connection *websocket.Conn, interval time.Duration, registry *ConnectionRegistry, clientID string) {
+func serveWebSocketConnection(connection *websocket.Conn, interval time.Duration, registry *ConnectionRegistry, clientID string, clientContainerStore ClientContainerStore) {
 	defer connection.Close()
-	defer registry.Unregister(clientID, connection)
+	defer func() {
+		if clientContainerStore != nil {
+			cleanupContext, cancel := context.WithTimeout(context.Background(), time.Second)
+			_ = clientContainerStore.Delete(cleanupContext, clientID)
+			cancel()
+		}
+		registry.Unregister(clientID, connection)
+	}()
 	connection.SetReadLimit(64 * 1024)
 
 	readErrors := make(chan error, 1)

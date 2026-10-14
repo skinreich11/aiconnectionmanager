@@ -8,21 +8,26 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"aiconnectionmanager/internal/connection"
 	"aiconnectionmanager/internal/messaging"
+	"aiconnectionmanager/internal/valkey"
 )
 
 // Config contains the runtime settings for the secure WebSocket service.
 type Config struct {
-	Address         string
-	CertificatePath string
-	KeyPath         string
-	InstanceID      string
-	Interval        time.Duration
-	ReportInterval  time.Duration
-	Messaging       messaging.Config
+	Address                     string
+	CertificatePath             string
+	KeyPath                     string
+	InstanceID                  string
+	Interval                    time.Duration
+	ReportInterval              time.Duration
+	Messaging                   messaging.Config
+	Valkey                      valkey.Config
+	RequireExternalDependencies bool
 }
 
 // Run starts the secure WebSocket service until ctx is canceled.
@@ -32,6 +37,9 @@ func Run(ctx context.Context, config Config, logger *log.Logger) error {
 	}
 	if config.Interval <= 0 {
 		return fmt.Errorf("message interval must be positive")
+	}
+	if err := validateExternalDependencies(config); err != nil {
+		return err
 	}
 	if config.ReportInterval <= 0 {
 		config.ReportInterval = 30 * time.Second
@@ -47,6 +55,18 @@ func Run(ctx context.Context, config Config, logger *log.Logger) error {
 
 	serverContext, cancelServer := context.WithCancel(ctx)
 	defer cancelServer()
+	containerID, err := resolveContainerID(serverContext, config)
+	if err != nil {
+		return err
+	}
+	config.Messaging.ContainerID = containerID
+	clientContainerStore, err := openValkeyStore(serverContext, config.Valkey)
+	if err != nil {
+		return err
+	}
+	if clientContainerStore != nil {
+		defer clientContainerStore.Close()
+	}
 	subscription, messageErrors, err := startMessageSubscription(serverContext, config.Messaging, logger)
 	if err != nil {
 		return err
@@ -68,7 +88,7 @@ func Run(ctx context.Context, config Config, logger *log.Logger) error {
 	})
 
 	server := &http.Server{
-		Handler:           connection.NewWebSocketHandler(config.Interval, registry),
+		Handler:           connection.NewWebSocketHandlerWithClientContainerStore(config.Interval, registry, clientContainerStore, containerID),
 		ReadHeaderTimeout: 10 * time.Second,
 		MaxHeaderBytes:    8 << 10,
 	}
@@ -96,6 +116,58 @@ func Run(ctx context.Context, config Config, logger *log.Logger) error {
 		registry.CloseAll()
 		return nil
 	}
+}
+
+func validateExternalDependencies(config Config) error {
+	if !config.RequireExternalDependencies {
+		return nil
+	}
+	if config.Messaging.ContainerID != "" {
+		return fmt.Errorf("AMQP_CONTAINER_ID must not be set on ECS; use ECS container metadata")
+	}
+	if strings.TrimSpace(config.Messaging.BrokerURL) == "" {
+		return fmt.Errorf("AMQP_URL is required on ECS for Amazon MQ")
+	}
+	brokerURL, err := url.Parse(config.Messaging.BrokerURL)
+	if err != nil || brokerURL.Scheme != "amqps" || brokerURL.Host == "" {
+		return fmt.Errorf("AMQP_URL must be an amqps:// Amazon MQ broker URL on ECS")
+	}
+	if strings.TrimSpace(config.Valkey.URL) == "" {
+		return fmt.Errorf("VALKEY_URL is required on ECS for ElastiCache")
+	}
+	cacheURL, err := url.Parse(config.Valkey.URL)
+	if err != nil || cacheURL.Scheme != "rediss" || cacheURL.Host == "" {
+		return fmt.Errorf("VALKEY_URL must be a rediss:// ElastiCache endpoint on ECS")
+	}
+	return nil
+}
+
+func resolveContainerID(ctx context.Context, config Config) (string, error) {
+	if config.Valkey.URL == "" && config.Messaging.BrokerURL == "" {
+		return "", nil
+	}
+	containerID, err := messaging.ResolveContainerID(ctx, config.Messaging)
+	if err != nil {
+		return "", fmt.Errorf("resolve container ID for RabbitMQ and Valkey: %w", err)
+	}
+	return containerID, nil
+}
+
+func openValkeyStore(ctx context.Context, config valkey.Config) (*valkey.Client, error) {
+	if config.URL == "" {
+		return nil, nil
+	}
+	client, err := valkey.NewClient(config)
+	if err != nil {
+		return nil, fmt.Errorf("configure Valkey client: %w", err)
+	}
+	pingContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := client.Ping(pingContext); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("connect to Valkey: %w", err)
+	}
+	return client, nil
 }
 
 func startMessageSubscription(ctx context.Context, config messaging.Config, logger *log.Logger) (*messaging.Subscription, <-chan error, error) {

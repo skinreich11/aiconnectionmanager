@@ -13,6 +13,16 @@ services:
       timeout: 5s
       retries: 12
 
+  valkey:
+    image: valkey/valkey:9-alpine
+    ports:
+      - "127.0.0.1:${VALKEY_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
   aiconnectionmanager:
     build: .
     image: ${IMAGE_NAME:-aiconnectionmanager:local}
@@ -20,10 +30,13 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      valkey:
+        condition: service_healthy
     environment:
       AMQP_URL: amqp://rabbitmq:5672/%2F
       AMQP_USERNAME: ${RABBITMQ_DEFAULT_USER}
       AMQP_PASSWORD: ${RABBITMQ_DEFAULT_PASS}
       AMQP_CONTAINER_ID: local-compose
+      VALKEY_URL: redis://valkey:6379
     ports:
       - "${HOST_PORT:-8443}:8443"

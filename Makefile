@@ -134,7 +134,7 @@ docker-check: ## Verify Docker and Docker Compose are available
 docker-build: docker-check ## Build the application image
 	docker build --tag "$(IMAGE)" .
 
-docker-run: docker-check ## Build and run the service with local RabbitMQ
+docker-run: docker-check ## Build and run the service with local RabbitMQ and Valkey
 	: "$${RABBITMQ_DEFAULT_USER:?RABBITMQ_DEFAULT_USER must be set for local RabbitMQ}"; \
 	: "$${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS must be set for local RabbitMQ}"; \
 	docker compose down --remove-orphans >/dev/null 2>&1 || true; \

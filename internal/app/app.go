@@ -15,6 +15,7 @@ import (
 	"aiconnectionmanager/internal/client"
 	"aiconnectionmanager/internal/messaging"
 	"aiconnectionmanager/internal/server"
+	"aiconnectionmanager/internal/valkey"
 )
 
 // Run dispatches the command-line entry point and returns a process exit code.
@@ -58,6 +59,8 @@ func runServerCommand(arguments []string, output io.Writer) error {
 	queuePrefix := flags.String("amqp-queue-prefix", os.Getenv("AMQP_QUEUE_PREFIX"), "RabbitMQ queue prefix")
 	metadataURL := flags.String("ecs-metadata-url", os.Getenv("ECS_CONTAINER_METADATA_URI_V4"), "ECS container metadata v4 URL")
 	containerID := flags.String("container-id", os.Getenv("AMQP_CONTAINER_ID"), "container ID override for local development")
+	valkeyURL := flags.String("valkey-url", os.Getenv("VALKEY_URL"), "Valkey URL; use rediss:// for TLS-enabled ElastiCache")
+	valkeyUsername := flags.String("valkey-username", os.Getenv("VALKEY_USERNAME"), "Valkey username")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -79,6 +82,12 @@ func runServerCommand(arguments []string, output io.Writer) error {
 			QueuePrefix: *queuePrefix,
 			MetadataURL: *metadataURL,
 			ContainerID: *containerID,
+		},
+		RequireExternalDependencies: strings.TrimSpace(*metadataURL) != "",
+		Valkey: valkey.Config{
+			URL:      *valkeyURL,
+			Username: *valkeyUsername,
+			Password: os.Getenv("VALKEY_PASSWORD"),
 		},
 	}, logger)
 }

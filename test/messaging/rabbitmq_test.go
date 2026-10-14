@@ -61,6 +61,18 @@ func TestContainerMetadataResolverReturnsCurrentContainerID(t *testing.T) {
 	}
 }
 
+func TestResolveContainerIDUsesSameOverrideAsQueueConfiguration(t *testing.T) {
+	containerID, err := messagingpkg.ResolveContainerID(context.Background(), messagingpkg.Config{
+		ContainerID: "container-123",
+	})
+	if err != nil {
+		t.Fatalf("resolve container ID: %v", err)
+	}
+	if containerID != "container-123" {
+		t.Fatalf("container ID = %q, want %q", containerID, "container-123")
+	}
+}
+
 func TestContainerMetadataResolverRejectsHTTPFailuresAndInvalidPayloads(t *testing.T) {
 	tests := []struct {
 		name    string
