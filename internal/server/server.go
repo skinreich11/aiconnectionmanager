@@ -115,6 +115,12 @@ func Run(ctx context.Context, config Config, logger *log.Logger) error {
 }
 
 func validateExternalDependencies(config Config) error {
+	if config.Address == "" {
+		return fmt.Errorf("server address is required")
+	}
+	if config.Interval <= 0 {
+		return fmt.Errorf("message interval must be positive")
+	}
 	if !config.RequireExternalDependencies {
 		return nil
 	}
@@ -134,12 +140,6 @@ func validateExternalDependencies(config Config) error {
 	cacheURL, err := url.Parse(config.Valkey.URL)
 	if err != nil || cacheURL.Scheme != "rediss" || cacheURL.Host == "" {
 		return fmt.Errorf("VALKEY_URL must be a rediss:// ElastiCache endpoint on ECS")
-	}
-	if config.Address == "" {
-		return fmt.Errorf("server address is required")
-	}
-	if config.Interval <= 0 {
-		return fmt.Errorf("message interval must be positive")
 	}
 	return nil
 }
