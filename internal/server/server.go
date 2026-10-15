@@ -34,12 +34,6 @@ var errDependencyNotConfigured = errors.New("dependency is not configured")
 
 // Run starts the secure WebSocket service until ctx is canceled.
 func Run(ctx context.Context, config Config, logger *log.Logger) error {
-	if config.Address == "" {
-		return fmt.Errorf("server address is required")
-	}
-	if config.Interval <= 0 {
-		return fmt.Errorf("message interval must be positive")
-	}
 	if err := validateExternalDependencies(config); err != nil {
 		return err
 	}
@@ -140,6 +134,12 @@ func validateExternalDependencies(config Config) error {
 	cacheURL, err := url.Parse(config.Valkey.URL)
 	if err != nil || cacheURL.Scheme != "rediss" || cacheURL.Host == "" {
 		return fmt.Errorf("VALKEY_URL must be a rediss:// ElastiCache endpoint on ECS")
+	}
+	if config.Address == "" {
+		return fmt.Errorf("server address is required")
+	}
+	if config.Interval <= 0 {
+		return fmt.Errorf("message interval must be positive")
 	}
 	return nil
 }
