@@ -30,6 +30,8 @@ type Config struct {
 	RequireExternalDependencies bool
 }
 
+var errDependencyNotConfigured = errors.New("dependency is not configured")
+
 // Run starts the secure WebSocket service until ctx is canceled.
 func Run(ctx context.Context, config Config, logger *log.Logger) error {
 	if config.Address == "" {
@@ -56,19 +58,19 @@ func Run(ctx context.Context, config Config, logger *log.Logger) error {
 	serverContext, cancelServer := context.WithCancel(ctx)
 	defer cancelServer()
 	containerID, err := resolveContainerID(serverContext, config)
-	if err != nil {
+	if err != nil && !errors.Is(err, errDependencyNotConfigured) {
 		return err
 	}
 	config.Messaging.ContainerID = containerID
 	clientContainerStore, err := openValkeyStore(serverContext, config.Valkey)
-	if err != nil {
+	if err != nil && !errors.Is(err, errDependencyNotConfigured) {
 		return err
 	}
 	if clientContainerStore != nil {
 		defer clientContainerStore.Close()
 	}
 	subscription, messageErrors, err := startMessageSubscription(serverContext, config.Messaging, logger)
-	if err != nil {
+	if err != nil && !errors.Is(err, errDependencyNotConfigured) {
 		return err
 	}
 	defer closeSubscription(subscription)
@@ -144,7 +146,7 @@ func validateExternalDependencies(config Config) error {
 
 func resolveContainerID(ctx context.Context, config Config) (string, error) {
 	if config.Valkey.URL == "" && config.Messaging.BrokerURL == "" {
-		return "", nil
+		return "", errDependencyNotConfigured
 	}
 	containerID, err := messaging.ResolveContainerID(ctx, config.Messaging)
 	if err != nil {
@@ -155,7 +157,7 @@ func resolveContainerID(ctx context.Context, config Config) (string, error) {
 
 func openValkeyStore(ctx context.Context, config valkey.Config) (*valkey.Client, error) {
 	if config.URL == "" {
-		return nil, nil
+		return nil, errDependencyNotConfigured
 	}
 	client, err := valkey.NewClient(config)
 	if err != nil {
@@ -172,7 +174,7 @@ func openValkeyStore(ctx context.Context, config valkey.Config) (*valkey.Client,
 
 func startMessageSubscription(ctx context.Context, config messaging.Config, logger *log.Logger) (*messaging.Subscription, <-chan error, error) {
 	if config.BrokerURL == "" {
-		return nil, nil, nil
+		return nil, nil, errDependencyNotConfigured
 	}
 	consumer, err := messaging.NewConsumer(config, nil, nil)
 	if err != nil {

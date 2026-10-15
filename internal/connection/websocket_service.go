@@ -76,15 +76,15 @@ func NewWebSocketHandlerWithClientContainerStore(interval time.Duration, registr
 			}
 		}
 
-		serveWebSocketConnection(connection, interval, registry, info.ClientID, clientContainerStore)
+		serveWebSocketConnection(request.Context(), connection, interval, registry, info.ClientID, clientContainerStore)
 	})
 }
 
-func serveWebSocketConnection(connection *websocket.Conn, interval time.Duration, registry *ConnectionRegistry, clientID string, clientContainerStore ClientContainerStore) {
+func serveWebSocketConnection(ctx context.Context, connection *websocket.Conn, interval time.Duration, registry *ConnectionRegistry, clientID string, clientContainerStore ClientContainerStore) {
 	defer connection.Close()
 	defer func() {
 		if clientContainerStore != nil {
-			cleanupContext, cancel := context.WithTimeout(context.Background(), time.Second)
+			cleanupContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Second)
 			_ = clientContainerStore.Delete(cleanupContext, clientID)
 			cancel()
 		}
